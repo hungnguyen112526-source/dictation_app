@@ -1,6 +1,7 @@
-import difflib, hashlib, hmac, html, json, os, sqlite3, tempfile, unicodedata
+import difflib, hashlib, hmac, html, json, os, sqlite3, subprocess, tempfile, unicodedata
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -78,12 +79,20 @@ def load_model(size):
     return WhisperModel(size, device="cpu", compute_type="int8")
 
 
+def decode(path):
+    """Giải mã audio bằng ffmpeg đi kèm imageio-ffmpeg -> mảng float32 16 kHz mono (tránh lỗi PyAV)."""
+    import imageio_ffmpeg
+    cmd = [imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"]
+    out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return np.frombuffer(out, np.int16).astype(np.float32) / 32768.0
+
+
 def transcribe(data, ext, size, lang):
     with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
         f.write(data)
         path = f.name
     try:
-        segs, _ = load_model(size).transcribe(path, language=lang, vad_filter=True)
+        segs, _ = load_model(size).transcribe(decode(path), language=lang, vad_filter=True)
         return [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
                 for s in segs if s.text.strip()]
     finally:
